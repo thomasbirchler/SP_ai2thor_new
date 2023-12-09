@@ -10,11 +10,35 @@ from pynput import keyboard
 
 
 ############## Socket ##############
+def send_files_to_tapa(client_socket):
+    directions = ["left", "front", "right"]
+    file_paths = ['../inputs/LAVIS/caption', '../output/objects/objects']
+    extensions = ['.txt', '.txt']
+    for file_path, extension in zip(file_paths, extensions):
+        for direction in directions:
+            file_name = f'{frame_counter:04}_{direction}{extension}'
+            file_path_complete = file_path + file_name
+            file_name = file_path_complete.rsplit('/', 1)[-1]
+            # Send the filename first
+            client_socket.send(file_name.encode("utf-8"))
 
-def connect_to_server():
-    # Client configuration
-    host = '192.168.1.204'
-    port = 54321
+            # Send a delimiter to separate filename and content
+            client_socket.send(b'\0')
+
+            with open(file_path_complete, 'rb') as text_file:
+                # Send file in batches
+                text_data = text_file.read(1024)
+                while text_data:
+                    client_socket.send(text_data)
+                    text_data = text_file.read(1024)
+
+            # Send a marker to indicate the end of the file
+            client_socket.send(b'FILE_END')
+            print(f"Frame{frame_counter:04}_{direction}{extension} sent via socket.")
+            time.sleep(0.5)
+
+
+def connect_to_server(port, host='192.168.1.204'):
     while True:
         try:
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -26,10 +50,10 @@ def connect_to_server():
             time.sleep(5)  # Wait for 5 seconds before retrying
 
 
-def send_files(client_socket):
+def send_files_to_lavis(client_socket):
     directions = ["left", "front", "right"]
-    file_paths = ['../output/objects/', '../output/frames/']
-    extensions = ['.txt', '.jpg']
+    file_paths = ['../output/frames/']
+    extensions = ['.jpg']
     for file_path, extension in zip(file_paths, extensions):
         for direction in directions:
             file_name = f'frame{frame_counter:04}_{direction}{extension}'
@@ -41,8 +65,8 @@ def send_files(client_socket):
 
             # Send a marker to indicate the end of the file
             client_socket.send(b'FILE_END')
-            print(f"frame{frame_counter:04}_{direction} sent.")
-            time.sleep(0.05)
+            print(f"{frame_counter:04}_{direction}{extension} sent via socket.")
+            time.sleep(0.5)
 
 
 def send_jpg_file(file, file_name, client_socket):
@@ -72,6 +96,47 @@ def send_txt_file(file, file_name, client_socket):
             client_socket.send(text_data)
             text_data = text_file.read(1024)
 
+
+def receive_data_from_socket(server, client_socket):
+    while True:
+        file_data = b''
+        file_name = b''
+        save_location = ""
+
+        # Receive the filename
+        while True:
+            data = client_socket.recv(1)
+            if data == b'\0':
+                break
+            file_name += data
+        # Decode the filename
+        file_name = file_name.decode("utf-8")
+
+        # Specify the saving location and file name
+        if server == "tapa":
+            save_location = "../inputs/tapa"
+        elif server == "LAVIS":
+            save_location = "../inputs/LAVIS"
+        file_path = os.path.join(save_location, file_name)
+
+        # Receive and save the file based on its extension
+        with open(file_path, 'wb') as file:
+            buffer = b''
+            while True:
+                # Receive and save the text file
+                text_data = client_socket.recv(1024)
+                if not text_data:
+                    break
+                # Add the newly received data to the buffer
+                buffer += text_data
+                while b'FILE_END' in buffer:
+                    # Split buffer at the first occurrence of 'FILE_END'
+                    file_data, buffer = buffer.split(b'FILE_END', 1)
+                    # Write the data to the file
+                    # file_data = file_data.decode("utf-8")
+                    file.write(file_data)
+                    print(f"File {file_name} from Socket saved.")
+                    return
 
 def disconnect_from_server(client_socket):
     client_socket.close()
@@ -193,7 +258,7 @@ def detect_objects():
 
 def save_objects(objects, direction):
     # Specify the relative path to the parent directory and format
-    relative_path = "../output/objects/frame" + f'{frame_counter:04}_{direction}' + ".txt"
+    relative_path = "../output/objects/objects" + f'{frame_counter:04}_{direction}' + ".txt"
     # Get the current working directory
     current_directory = os.getcwd()
     # Construct the full output file path
@@ -207,31 +272,28 @@ def save_objects(objects, direction):
 def main():
     global frame_counter
 
-    client_socket = connect_to_server()
+    client_socket_lavis = connect_to_server(54321)
+    client_socket_tapa = connect_to_server(54320)
+
+    send_files_to_tapa(client_socket_tapa)
+    receive_data_from_socket("tapa", client_socket_tapa)
 
     controller.step(action="Done")
-    save_surrounding()
-    send_files(client_socket)
+
     while True:
-        controller_single_input()
         save_surrounding()
-        send_files(client_socket)
+        send_files_to_lavis(client_socket_lavis)
+        for i in range(3):
+            receive_data_from_socket("lavis", client_socket_lavis)
+
+        event, key = controller_single_input()
+        if key == "Key.esc":
+            break
+
         frame_counter += 1
-        # print("Waiting.")
-        # time.sleep(5)
 
-    # while True:
-    # event, key = controller_single_input()
-    # if key == "Key.esc":
-    #     break
-    # save_surrounding()
-    # send_files(client_socket)
-    # frame_counter += 1
-
-    # disconnect_from_server(client_socket)
+    # disconnect_from_server(client_socket_lavis)
     # display_frame(event.frame)
-    # output_from_euler = communication_with_euler()
-    # print(output_from_euler)
     # LLM.get_instruction_from_llm()
 
 

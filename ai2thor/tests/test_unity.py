@@ -504,7 +504,7 @@ def test_add_third_party_camera(controller):
     )
     assert not event.metadata[
         "lastActionSuccess"
-    ], "position should not allow float input!"
+    ], "position should not allow float inputs!"
 
     # orthographicSize expects float, not Vector3!
     error_message = None

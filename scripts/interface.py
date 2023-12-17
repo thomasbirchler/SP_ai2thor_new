@@ -269,8 +269,29 @@ def save_objects(objects, direction):
             file.write(obj + "\n")  # Write each item to the file followed by a newline character
 
 
+def is_object_visible(object):
+    visible_objects = detect_objects()
+    if object in visible_objects:
+        return True
+    else:
+        return False
+
+
+def is_object_in_scene(target):
+    event = controller.step(action="Done")
+    objects = event.metadata["objects"]
+    # ["TARGET_OBJECTS_TYPES"]
+    for object in objects:
+        if target == object["objectType"]:
+            return True
+    return False
+
+
 def main():
     global frame_counter
+    target_object = "Apple"
+    if is_object_in_scene(target_object) is False:
+        print("Target object is not available in the scene.")
 
     client_socket_lavis = connect_to_server(54321)
     client_socket_tapa = connect_to_server(54320)
@@ -285,6 +306,10 @@ def main():
         send_files_to_lavis(client_socket_lavis)
         for i in range(3):
             receive_data_from_socket("lavis", client_socket_lavis)
+
+        if is_object_visible(target_object) is True:
+            print(f"Target object ({target_object}) found after {frame_counter} steps.")
+            break
 
         event, key = controller_single_input()
         if key == "Key.esc":

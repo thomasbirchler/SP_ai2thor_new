@@ -1,4 +1,5 @@
 import os
+import random
 import sys
 import time
 
@@ -8,8 +9,24 @@ import socket
 from ai2thor.controller import Controller
 from pynput import keyboard
 
+global frame_counter
+
+
 
 ############## Socket ##############
+
+def connect_to_server(port, host='192.168.1.204'):
+    while True:
+        try:
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect((host, port))
+            print("Connected to server.")
+            return client_socket
+        except ConnectionRefusedError:
+            print(f"Connection to port {port} refused. Retrying in 5 seconds...")
+            time.sleep(5)  # Wait for 5 seconds before retrying
+
+
 def send_files_to_tapa(client_socket):
     directions = ["left", "front", "right"]
     file_paths = ['../inputs/LAVIS/caption', '../output/objects/objects']
@@ -34,39 +51,26 @@ def send_files_to_tapa(client_socket):
 
             # Send a marker to indicate the end of the file
             client_socket.send(b'FILE_END')
-            print(f"Frame{frame_counter:04}_{direction}{extension} sent via socket.")
+            print(f"{file_name} sent via socket to tapa.")
             time.sleep(0.5)
-
-
-def connect_to_server(port, host='192.168.1.204'):
-    while True:
-        try:
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client_socket.connect((host, port))
-            print("Connected to server.")
-            return client_socket
-        except ConnectionRefusedError:
-            print("Connection refused. Retrying in 5 seconds...")
-            time.sleep(5)  # Wait for 5 seconds before retrying
 
 
 def send_files_to_lavis(client_socket):
     directions = ["left", "front", "right"]
-    file_paths = ['../output/frames/']
-    extensions = ['.jpg']
-    for file_path, extension in zip(file_paths, extensions):
-        for direction in directions:
-            file_name = f'frame{frame_counter:04}_{direction}{extension}'
-            file_path_complete = file_path + file_name
-            if "objects" in file_path_complete:
-                send_txt_file(file_path_complete, file_name, client_socket)
-            elif "frames" in file_path:
-                send_jpg_file(file_path_complete, file_name, client_socket)
+    file_path = '../output/frames/'
 
-            # Send a marker to indicate the end of the file
-            client_socket.send(b'FILE_END')
-            print(f"{frame_counter:04}_{direction}{extension} sent via socket.")
-            time.sleep(0.5)
+    for direction in directions:
+        file_name = f'frame{frame_counter:04}_{direction}.jpg'
+        file_path_complete = file_path + file_name
+        # if "objects" in file_path_complete:
+        #     send_txt_file(file_path_complete, file_name, client_socket)
+        if "frames" in file_path:
+            send_jpg_file(file_path_complete, file_name, client_socket)
+
+        # Send a marker to indicate the end of the file
+        client_socket.send(b'FILE_END')
+        print(f"frame{frame_counter:04}_{direction}.jpg sent via socket to lavis.")
+        time.sleep(1)
 
 
 def send_jpg_file(file, file_name, client_socket):
@@ -115,7 +119,7 @@ def receive_data_from_socket(server, client_socket):
         # Specify the saving location and file name
         if server == "tapa":
             save_location = "../inputs/tapa"
-        elif server == "LAVIS":
+        elif server == "lavis":
             save_location = "../inputs/LAVIS"
         file_path = os.path.join(save_location, file_name)
 
@@ -138,11 +142,19 @@ def receive_data_from_socket(server, client_socket):
                     print(f"File {file_name} from Socket saved.")
                     return
 
+
 def disconnect_from_server(client_socket):
     client_socket.close()
 
 
-############## Keyboard ##############
+
+############## Controller ##############
+
+# Define and initialize the controller variable at the module level
+controller = Controller(scene="FloorPlan10")
+# controller = Controller(scene="FloorPlan_Train1_1")
+
+
 def wait_and_return_key():
     key_pressed = None
 
@@ -176,13 +188,8 @@ key_to_action = {
     'w': "MoveAhead"
 }
 
-############## Controller ##############
 
-# Define and initialize the controller variable at the module level
-controller = Controller(scene="FloorPlan10")
-
-
-def controller_single_input():
+def controller_asdf():
     while True:
         key = wait_and_return_key()
         action = key_to_action.get(key)
@@ -193,12 +200,53 @@ def controller_single_input():
         else:
             break
     event = controller.step(action=action)
+    controller.step(action="Done")
     return event, key
 
 
-############## Vision ##############
-frame_counter = 0
+def execute_received_command():
+    file_path = f"../inputs/tapa/processed_command{frame_counter:04}.txt"
 
+    # Keywords to search for
+    keywords = ["left", "front", "right"]
+
+    # Initialize a list to store the found keywords
+    command = ""
+
+    # Open and read the text file
+    with open(file_path, "r") as file:
+        # Read each line in the file
+        for line in file:
+            # Check if any of the keywords are present in the line
+            for keyword in keywords:
+                if keyword in line:
+                    command = keyword
+                    break
+
+    if command == "left":
+        controller.step(action="RotateLeft", degrees=90)
+        controller.step(action="MoveAhead")
+    elif command == "front":
+        controller.step(action="MoveAhead")
+    elif command == "right":
+        controller.step(action="RotateRight", degrees=90)
+        controller.step(action="MoveAhead")
+    else:
+        random_number = random.randint(1, 3)
+        if random_number == 1:
+            controller.step(action="RotateLeft", degrees=90)
+            controller.step(action="MoveAhead")
+        elif random_number == 2:
+            controller.step(action="MoveAhead")
+        elif random_number == 3:
+            controller.step(action="RotateRight", degrees=90)
+            controller.step(action="MoveAhead")
+
+    controller.step(action="Done")
+
+
+
+############## Vision ##############
 
 def save_frame(frame, direction):
     # Read image
@@ -289,37 +337,47 @@ def is_object_in_scene(target):
 
 def main():
     global frame_counter
-    target_object = "Apple"
+    frame_counter = 0
+
+    target_object = "Fridge"
     if is_object_in_scene(target_object) is False:
         print("Target object is not available in the scene.")
 
+    # Setup connection to image captioning and Llama2
     client_socket_lavis = connect_to_server(54321)
     client_socket_tapa = connect_to_server(54320)
-
-    send_files_to_tapa(client_socket_tapa)
-    receive_data_from_socket("tapa", client_socket_tapa)
+    client_socket_tapa.send(target_object.encode("utf-8"))
 
     controller.step(action="Done")
 
     while True:
         save_surrounding()
+
+        if is_object_visible(target_object) is True:
+            print(f"Target object ({target_object}) found after {frame_counter} steps.")
+            client_socket_tapa.send("exit\0".encode("utf-8"))
+            client_socket_lavis.send("exit\0".encode("utf-8"))
+            break
+
         send_files_to_lavis(client_socket_lavis)
         for i in range(3):
             receive_data_from_socket("lavis", client_socket_lavis)
 
-        if is_object_visible(target_object) is True:
-            print(f"Target object ({target_object}) found after {frame_counter} steps.")
-            break
+        send_files_to_tapa(client_socket_tapa)
+        receive_data_from_socket("tapa", client_socket_tapa)
 
-        event, key = controller_single_input()
-        if key == "Key.esc":
-            break
+        execute_received_command()
+
+
+        ### Use this to control robot manually:
+        # event, key = controller_asdf()
+        # if key == "Key.esc":
+        #     break
 
         frame_counter += 1
 
-    # disconnect_from_server(client_socket_lavis)
-    # display_frame(event.frame)
-    # LLM.get_instruction_from_llm()
+    disconnect_from_server(client_socket_lavis)
+    disconnect_from_server(client_socket_tapa)
 
 
 if __name__ == "__main__":
